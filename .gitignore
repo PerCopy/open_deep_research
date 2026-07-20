@@ -67,3 +67,14 @@ tmp/
 temp/
 
 .langgraph_api
+
+# CodeValid — auto-added
+coverage/
+.next/
+out/
+.turbo/
+.venv/
+.codevalid/ui/Dockerfile
+.codevalid/ui/playwright.config.js
+.codevalid/ui/helper/
+.codevalid/ui/helpers/

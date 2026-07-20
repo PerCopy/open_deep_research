@@ -1,0 +1,39 @@
+# Virtual environments — must not overwrite the system-Python install done in the Dockerfile
+.venv/
+venv/
+env/
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Test and coverage artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Git
+.git/
+.github/
+
+# LangGraph local dev state
+.langgraph_api/
+
+# Logs
+*.log
+logs/
