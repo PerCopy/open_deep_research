@@ -1,0 +1,19 @@
+# Agent application dependencies
+langgraph>=0.5.4
+langchain-community>=0.3.9
+langchain-openai>=0.3.28
+langchain-anthropic>=0.3.15
+langchain-mcp-adapters>=0.1.6
+langchain-tavily
+langchain-groq>=0.2.4
+openai>=1.99.2
+tavily-python>=0.5.0
+requests>=2.32.3
+python-dotenv>=1.0.1
+httpx>=0.24.0
+aiohttp
+
+# OpenTelemetry instrumentation for LangChain (framework pins — do not edit during TESTGEN)
+opentelemetry-api==1.43.0
+opentelemetry-sdk==1.43.0
+opentelemetry-instrumentation-genai-langchain==1.0b0

@@ -10,5 +10,8 @@
     ],
     "auth": {
       "path": "./src/security/auth.py:auth"
+    },
+    "http": {
+      "app": "./src/open_deep_research/server.py:router"
     }
 }
