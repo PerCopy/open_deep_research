@@ -18,7 +18,7 @@ defaultTest:
 tests:
   - description: "Happy path research workflow execution"
     vars:
-      test_case_id: "happy_path_research_workflow_execution"
+      test_case_id: "research_request_happy_path"
       user_message: "Research the current state of quantum computing in drug discovery, focusing on recent breakthroughs and commercial applications."
       rubric: |
         - accepts the research request without asking clarifying questions - generates a structured research brief - executes the multi-stage research workflow - returns a final structured research report - report is concise and derived from research findings - report structure is appropriate for a research deliverable
