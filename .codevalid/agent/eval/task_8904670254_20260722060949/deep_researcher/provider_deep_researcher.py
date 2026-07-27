@@ -162,12 +162,28 @@ def _configure_env(config: dict) -> None:
     os.environ["OPENAI_API_BASE"] = base_url
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["OPENAI_API_KEY"] = api_key
+    # Route all providers through the LiteLLM OpenAI-compatible gateway
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    os.environ["ANTHROPIC_BASE_URL"] = base_url
     os.environ["GET_API_KEYS_FROM_CONFIG"] = "false"
     _ = config
 
 
+def _normalize_model(model: str) -> str:
+    """Ensure the model string has an openai: prefix so it routes through the LiteLLM proxy.
+
+    LiteLLM exposes an OpenAI-compatible API; using the openai: provider prefix ensures
+    langchain's init_chat_model uses the openai client (pointing at OPENAI_BASE_URL) for all
+    models regardless of their original provider.
+    """
+    if not model or ":" in model:
+        return model
+    return f"openai:{model}"
+
+
 def _resolve_stage_models(config: dict, test_case_id: str) -> dict[str, Any]:
-    selected_model = config.get("model")
+    raw_model = config.get("model")
+    selected_model = _normalize_model(raw_model) if raw_model else None
     resolved = {
         "allow_clarification": True,
         "search_api": "none",

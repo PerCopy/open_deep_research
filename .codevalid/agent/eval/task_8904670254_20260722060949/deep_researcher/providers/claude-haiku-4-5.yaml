@@ -1,0 +1,5 @@
+id: file://provider_deep_researcher.py
+label: "deep_researcher / claude-haiku-4-5"
+config:
+  model: claude-haiku-4-5
+  temperature: 0
