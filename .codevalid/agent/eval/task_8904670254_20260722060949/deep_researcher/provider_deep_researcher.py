@@ -107,6 +107,26 @@ def _seed_validation_stage_ordering() -> None:
     return None
 
 
+_NATIVE_PROVIDER_PREFIXES = ("anthropic:", "gemini:", "google:", "cohere:", "mistral:", "bedrock:")
+
+def _to_openai_model(model: str) -> str:
+    """Rewrite model strings to openai: prefix so LangChain routes them through the
+    OpenAI-compatible LiteLLM gateway.  Native Anthropic/Gemini/Google clients will
+    fail auth inside the eval container because only OPENAI_API_KEY / OPENAI_BASE_URL
+    are wired to the LiteLLM gateway."""
+    if not model:
+        return model
+    # Already using openai: — nothing to do
+    if model.startswith("openai:"):
+        return model
+    # Strip any other native provider prefix and re-add openai:
+    for prefix in _NATIVE_PROVIDER_PREFIXES:
+        if model.startswith(prefix):
+            return "openai:" + model[len(prefix):]
+    # Bare model name (no provider prefix) — wrap with openai:
+    return "openai:" + model
+
+
 def _apply_runtime_env(config: dict[str, Any], test_case_id: str) -> None:
     base_url = os.environ["LITELLM_BASE_URL"]
     api_key = os.environ["LITELLM_API_KEY"]
@@ -343,6 +363,10 @@ async def _invoke_agent(user_input: str, vars_: dict[str, Any], config: dict[str
     _exporter.clear()
 
     selected_model = config.get("model")
+    # Normalise: force openai: prefix so init_chat_model uses the OpenAI-compatible
+    # LiteLLM gateway rather than a native Anthropic/Gemini client that would fail auth.
+    if selected_model:
+        selected_model = _to_openai_model(selected_model)
     default_cfg = Configuration()
     configurable: dict[str, Any] = {
         "search_api": "none",

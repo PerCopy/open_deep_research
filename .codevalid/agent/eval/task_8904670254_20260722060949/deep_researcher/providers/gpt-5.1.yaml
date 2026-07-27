@@ -1,5 +1,5 @@
 id: file://provider_deep_researcher.py
 label: "deep_researcher / gpt-5.1"
 config:
-  model: gpt-5.1
+  model: openai:gpt-5.1
   temperature: 0
