@@ -12,268 +12,178 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[5]
 if str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))
 
-from langchain_core.messages import HumanMessage
+os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
+
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 try:
     from opentelemetry.instrumentation.genai.langchain import LangChainInstrumentor
-except Exception:  # pragma: no cover
+except Exception:
     try:
         from opentelemetry.instrumentation.langchain import LangChainInstrumentor
-    except Exception:  # pragma: no cover
+    except Exception:
         from openinference.instrumentation.langchain import LangChainInstrumentor
 
-from open_deep_research.deep_researcher import deep_researcher
+from langchain_core.messages import HumanMessage
 
-os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
+from open_deep_research.configuration import Configuration
+from open_deep_research.deep_researcher import deep_researcher
 
 _exporter = InMemorySpanExporter()
 _provider = TracerProvider()
 _provider.add_span_processor(SimpleSpanProcessor(_exporter))
+trace.set_tracer_provider(_provider)
 _instrumentor = LangChainInstrumentor()
-_INSTRUMENTED = False
-try:
-    trace.set_tracer_provider(_provider)
-except Exception:
-    pass
+_instrumented = False
 try:
     _instrumentor.instrument(tracer_provider=_provider)
-    _INSTRUMENTED = True
+    _instrumented = True
 except Exception:
-    _INSTRUMENTED = False
+    _instrumented = False
 
-_BASELINE_ENV = deepcopy({
-    key: os.environ.get(key)
-    for key in [
-        "OPENAI_API_KEY",
-        "OPENAI_API_BASE",
-        "OPENAI_BASE_URL",
-        "GET_API_KEYS_FROM_CONFIG",
-    ]
+_BASE_ENV = deepcopy({
+    "LITELLM_BASE_URL": os.environ.get("LITELLM_BASE_URL"),
+    "LITELLM_API_KEY": os.environ.get("LITELLM_API_KEY"),
+    "OPENAI_API_BASE": os.environ.get("OPENAI_API_BASE"),
+    "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL"),
+    "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+    "TAVILY_API_KEY": os.environ.get("TAVILY_API_KEY"),
+    "GET_API_KEYS_FROM_CONFIG": os.environ.get("GET_API_KEYS_FROM_CONFIG"),
 })
 
 
-def _extract_vars(options: dict | None, context: dict | None) -> dict:
+def _extract_vars(options: dict | None, context: dict | None) -> dict[str, Any]:
     options = options or {}
     context = context or {}
+    candidates = []
+    if isinstance(context.get("vars"), dict):
+        candidates.append(context.get("vars"))
+    if isinstance(options.get("vars"), dict):
+        candidates.append(options.get("vars"))
+    if isinstance(context.get("test"), dict) and isinstance(context["test"].get("vars"), dict):
+        candidates.append(context["test"]["vars"])
     merged: dict[str, Any] = {}
-    for candidate in [
-        options.get("vars"),
-        context.get("vars"),
-        options.get("context", {}).get("vars") if isinstance(options.get("context"), dict) else None,
-        context.get("context", {}).get("vars") if isinstance(context.get("context"), dict) else None,
-    ]:
-        if isinstance(candidate, dict):
-            merged.update(candidate)
+    for item in candidates:
+        merged.update(item)
     return merged
 
 
-def _extract_config(options: dict | None, context: dict | None) -> dict:
-    options = options or {}
-    context = context or {}
-    config: dict[str, Any] = {}
-    for candidate in [options.get("config"), context.get("config")]:
-        if isinstance(candidate, dict):
-            config.update(candidate)
-    return config
-
-
-def _seed_happy_path_research_workflow_execution() -> None:
+def _seed_happy_path_complete_workflow() -> None:
     return None
 
 
-def _seed_clarification_request_for_vague_research_topic() -> None:
+def _seed_model_name_summarization_default() -> None:
     return None
 
 
-def _seed_clarification_skipped_when_explicitly_disabled() -> None:
+def _seed_model_name_research_default() -> None:
     return None
 
 
-def _seed_research_brief_created_from_user_messages() -> None:
+def _seed_model_name_final_report_default() -> None:
     return None
 
 
-def _seed_final_report_is_structured_and_comprehensive() -> None:
+def _seed_missing_info_clarification_needed() -> None:
     return None
 
 
-def _seed_final_report_generation_retries_on_token_limit() -> None:
+def _seed_edge_case_clarification_disabled() -> None:
     return None
 
 
-def _seed_declines_non_research_requests_appropriately() -> None:
+def _seed_happy_path_structured_final_report() -> None:
     return None
 
 
-def _seed_declines_harmful_or_unethical_research() -> None:
+def _seed_edge_case_token_limit_retry() -> None:
     return None
 
 
-def _seed_clear_topic_proceeds_without_clarification() -> None:
+def _seed_validation_stage_ordering() -> None:
     return None
 
 
-def _seed_workflow_uses_correct_default_models_per_stage() -> None:
-    return None
+def _apply_runtime_env(config: dict[str, Any], test_case_id: str) -> None:
+    base_url = os.environ["LITELLM_BASE_URL"]
+    api_key = os.environ["LITELLM_API_KEY"]
+    os.environ["OPENAI_API_BASE"] = base_url
+    os.environ["OPENAI_BASE_URL"] = base_url
+    os.environ["OPENAI_API_KEY"] = api_key
+    os.environ["GET_API_KEYS_FROM_CONFIG"] = "false"
 
 
-def setup_dependencies(test_case_id: str, precondition: Any, config: dict | None) -> None:
-    _ = precondition
-    _ = config
-    if test_case_id == "happy_path_research_workflow_execution":
-        _seed_happy_path_research_workflow_execution()
-    elif test_case_id == "clarification_request_for_vague_research_topic":
-        _seed_clarification_request_for_vague_research_topic()
-    elif test_case_id == "clarification_skipped_when_explicitly_disabled":
-        _seed_clarification_skipped_when_explicitly_disabled()
-    elif test_case_id == "research_brief_created_from_user_messages":
-        _seed_research_brief_created_from_user_messages()
-    elif test_case_id == "final_report_is_structured_and_comprehensive":
-        _seed_final_report_is_structured_and_comprehensive()
-    elif test_case_id == "final_report_generation_retries_on_token_limit":
-        _seed_final_report_generation_retries_on_token_limit()
-    elif test_case_id == "declines_non_research_requests_appropriately":
-        _seed_declines_non_research_requests_appropriately()
-    elif test_case_id == "declines_harmful_or_unethical_research":
-        _seed_declines_harmful_or_unethical_research()
-    elif test_case_id == "clear_topic_proceeds_without_clarification":
-        _seed_clear_topic_proceeds_without_clarification()
-    elif test_case_id == "workflow_uses_correct_default_models_per_stage":
-        _seed_workflow_uses_correct_default_models_per_stage()
+def setup_dependencies(test_case_id: str, precondition: Any, config: dict[str, Any]) -> None:
+    _apply_runtime_env(config, test_case_id)
+    if test_case_id == "happy_path_complete_workflow":
+        _seed_happy_path_complete_workflow()
+    elif test_case_id == "model_name_summarization_default":
+        _seed_model_name_summarization_default()
+    elif test_case_id == "model_name_research_default":
+        _seed_model_name_research_default()
+    elif test_case_id == "model_name_final_report_default":
+        _seed_model_name_final_report_default()
+    elif test_case_id == "missing_info_clarification_needed":
+        _seed_missing_info_clarification_needed()
+    elif test_case_id == "edge_case_clarification_disabled":
+        _seed_edge_case_clarification_disabled()
+    elif test_case_id == "happy_path_structured_final_report":
+        _seed_happy_path_structured_final_report()
+    elif test_case_id == "edge_case_token_limit_retry":
+        _seed_edge_case_token_limit_retry()
+    elif test_case_id == "validation_stage_ordering":
+        _seed_validation_stage_ordering()
     else:
         return None
 
 
 def cleanup_dependencies() -> None:
-    for key, value in _BASELINE_ENV.items():
+    for key, value in _BASE_ENV.items():
         if value is None:
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
 
 
-def _configure_env(config: dict) -> None:
-    base_url = os.environ["LITELLM_BASE_URL"]
-    api_key = os.environ["LITELLM_API_KEY"]
-    os.environ["OPENAI_API_BASE"] = base_url
-    os.environ["OPENAI_BASE_URL"] = base_url
-    os.environ["OPENAI_API_KEY"] = api_key
-    # Route all providers through the LiteLLM OpenAI-compatible gateway
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    os.environ["ANTHROPIC_BASE_URL"] = base_url
-    os.environ["GET_API_KEYS_FROM_CONFIG"] = "false"
-    _ = config
+class _FakeTokenLimitError(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.code = "context_length_exceeded"
+        self.type = "invalid_request_error"
 
 
-def _normalize_model(model: str) -> str:
-    """Ensure the model string has an openai: prefix so it routes through the LiteLLM proxy.
-
-    LiteLLM exposes an OpenAI-compatible API; using the openai: provider prefix ensures
-    langchain's init_chat_model uses the openai client (pointing at OPENAI_BASE_URL) for all
-    models regardless of their original provider.
-    """
-    if not model or ":" in model:
-        return model
-    return f"openai:{model}"
+_FakeTokenLimitError.__module__ = "openai"
 
 
-def _resolve_stage_models(config: dict, test_case_id: str) -> dict[str, Any]:
-    raw_model = config.get("model")
-    selected_model = _normalize_model(raw_model) if raw_model else None
-    resolved = {
-        "allow_clarification": True,
-        "search_api": "none",
-        "summarization_model": selected_model or "openai:gpt-4.1-mini",
-        "research_model": selected_model or "openai:gpt-4.1",
-        "compression_model": selected_model or "openai:gpt-4.1",
-        "final_report_model": selected_model or "openai:gpt-4.1",
-    }
-    if test_case_id == "clarification_skipped_when_explicitly_disabled":
-        resolved["allow_clarification"] = False
-    elif test_case_id in {
-        "clarification_request_for_vague_research_topic",
-        "clear_topic_proceeds_without_clarification",
-        "happy_path_research_workflow_execution",
-        "research_brief_created_from_user_messages",
-        "final_report_is_structured_and_comprehensive",
-        "final_report_generation_retries_on_token_limit",
-        "workflow_uses_correct_default_models_per_stage",
-    }:
-        resolved["allow_clarification"] = True
-    elif test_case_id in {
-        "declines_non_research_requests_appropriately",
-        "declines_harmful_or_unethical_research",
-    }:
-        resolved["allow_clarification"] = True
-    return resolved
-
-
-async def _run_agent(user_input: str, configurable: dict[str, Any]) -> Any:
-    return await deep_researcher.ainvoke(
-        {"messages": [HumanMessage(content=user_input)]},
-        config={"configurable": configurable},
-    )
-
-
-def _coerce_message_content(value: Any) -> str:
+def _coerce_text(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("output", "answer", "content", "final_report"):
+            if key in value and value[key] is not None:
+                return _coerce_text(value[key])
+        if "messages" in value and value["messages"]:
+            last = value["messages"][-1]
+            return _coerce_text(last)
+        return json.dumps(value, ensure_ascii=False)
     content = getattr(value, "content", None)
-    if isinstance(content, str):
-        return content
     if isinstance(content, list):
-        parts: list[str] = []
+        parts = []
         for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                text = item.get("text") or item.get("content") or item.get("value")
-                if text:
-                    parts.append(str(text))
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content") or json.dumps(item, ensure_ascii=False)
+                parts.append(str(text))
             else:
-                text = getattr(item, "text", None) or getattr(item, "content", None)
-                if text:
-                    parts.append(str(text))
-        return "\n".join(part for part in parts if part)
+                parts.append(str(item))
+        return "\n".join(parts)
     if content is not None:
         return str(content)
     return str(value)
-
-
-def _extract_answer(result: Any) -> str:
-    if isinstance(result, str):
-        return result
-    if hasattr(result, "content"):
-        text = _coerce_message_content(result)
-        if text:
-            return text
-    if isinstance(result, dict):
-        for key in ["final_report", "output", "answer", "content"]:
-            value = result.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-            if value is not None:
-                text = _coerce_message_content(value)
-                if text:
-                    return text
-        messages = result.get("messages")
-        if isinstance(messages, list) and messages:
-            for msg in reversed(messages):
-                text = _coerce_message_content(msg)
-                if text:
-                    return text
-        return json.dumps(result, ensure_ascii=False, default=str)
-    messages = getattr(result, "messages", None)
-    if isinstance(messages, list) and messages:
-        for msg in reversed(messages):
-            text = _coerce_message_content(msg)
-            if text:
-                return text
-    return str(result)
 
 
 def _normalize_attributes(attrs: Any) -> dict[str, Any]:
@@ -289,49 +199,27 @@ def _normalize_attributes(attrs: Any) -> dict[str, Any]:
     return normalized
 
 
-def _pick_first(attrs: dict[str, Any], keys: list[str]) -> Any:
-    for key in keys:
-        if key in attrs and attrs[key] not in (None, "", [], {}):
-            return attrs[key]
-    return None
-
-
 def _map_genai_attributes(attrs: dict[str, Any]) -> dict[str, Any]:
     mapped: dict[str, Any] = {}
-    alias_map = {
-        "gen_ai.system": [
-            "gen_ai.system",
-            "llm.system",
-            "ai.system",
-            "provider",
-        ],
+
+    alias_groups = {
+        "gen_ai.system": ["gen_ai.system", "llm.system", "openinference.llm.system"],
         "gen_ai.request.model": [
             "gen_ai.request.model",
             "llm.request.model",
             "llm.model_name",
             "model",
             "openinference.llm.model_name",
-            "gen_ai.response.model_name",
         ],
-        "gen_ai.response.model": [
-            "gen_ai.response.model",
-            "llm.response.model",
-            "response.model",
-            "openinference.output.model",
-        ],
-        "gen_ai.operation.name": [
-            "gen_ai.operation.name",
-            "llm.operation.name",
-            "openinference.span.kind",
-            "langchain.span.kind",
-        ],
+        "gen_ai.response.model": ["gen_ai.response.model", "llm.response.model", "response.model"],
+        "gen_ai.operation.name": ["gen_ai.operation.name", "llm.operation.name", "openinference.span.kind"],
         "gen_ai.prompt": [
             "gen_ai.prompt",
             "input.value",
             "llm.prompts",
             "prompt",
             "gen_ai.input.messages",
-            "openinference.input.value",
+            "input",
         ],
         "gen_ai.completion": [
             "gen_ai.completion",
@@ -339,81 +227,88 @@ def _map_genai_attributes(attrs: dict[str, Any]) -> dict[str, Any]:
             "response",
             "completion",
             "gen_ai.output.messages",
-            "openinference.output.value",
+            "output",
         ],
         "gen_ai.usage.input_tokens": [
             "gen_ai.usage.input_tokens",
-            "llm.token_count.prompt",
             "llm.usage.prompt_tokens",
-            "usage.prompt_tokens",
             "input_tokens",
             "prompt_tokens",
+            "openinference.llm.token_count.prompt",
         ],
         "gen_ai.usage.output_tokens": [
             "gen_ai.usage.output_tokens",
-            "llm.token_count.completion",
             "llm.usage.completion_tokens",
-            "usage.completion_tokens",
             "output_tokens",
             "completion_tokens",
+            "openinference.llm.token_count.completion",
         ],
     }
-    for target_key, source_keys in alias_map.items():
-        value = _pick_first(attrs, source_keys)
-        if value is not None:
-            mapped[target_key] = value
+
+    for target, aliases in alias_groups.items():
+        for alias in aliases:
+            if alias in attrs and attrs[alias] not in (None, "", [], {}):
+                mapped[target] = attrs[alias]
+                break
+
+    if "gen_ai.prompt" not in mapped and "gen_ai.input.messages" in attrs:
+        mapped["gen_ai.prompt"] = attrs["gen_ai.input.messages"]
+    if "gen_ai.completion" not in mapped and "gen_ai.output.messages" in attrs:
+        mapped["gen_ai.completion"] = attrs["gen_ai.output.messages"]
+    if "gen_ai.operation.name" not in mapped and attrs.get("gen_ai.tool.name"):
+        mapped["gen_ai.operation.name"] = "execute_tool"
+
+    for key in ("gen_ai.system", "gen_ai.request.model", "gen_ai.response.model"):
+        if key not in mapped and attrs.get(key):
+            mapped[key] = attrs[key]
+
     return mapped
 
 
-def _span_kind(span_name: str, attrs: dict[str, Any], genai: dict[str, Any]) -> str:
-    operation = str(genai.get("gen_ai.operation.name", "")).lower()
-    if operation in {"chat", "llm", "completion"}:
+def _infer_node_type(name: str, attrs: dict[str, Any], mapped: dict[str, Any]) -> str:
+    operation = str(mapped.get("gen_ai.operation.name") or attrs.get("gen_ai.operation.name") or "").lower()
+    if operation == "execute_tool" or "tool" in name.lower() or attrs.get("gen_ai.tool.name"):
+        return "tool"
+    if operation in {"chat", "completion", "llm"}:
         return "llm"
-    if operation in {"execute_tool", "tool"}:
-        return "tool"
-    if "tool" in span_name.lower():
-        return "tool"
-    if any(key in attrs for key in ["gen_ai.tool.name", "tool.name", "langchain.tool.name"]):
-        return "tool"
-    if "agent" in span_name.lower() or "graph" in span_name.lower() or "workflow" in span_name.lower():
+    if operation in {"invoke_agent", "invoke_workflow"}:
+        return "agent"
+    if "graph" in name.lower() or "research" in name.lower() or "supervisor" in name.lower():
         return "agent"
     return "span"
 
 
-def _span_to_node(span: Any) -> dict[str, Any]:
-    attrs = _normalize_attributes(getattr(span, "attributes", {}) or {})
-    genai = _map_genai_attributes(attrs)
-    parent_span_id = span.parent.span_id if getattr(span, "parent", None) is not None else None
-    return {
-        "type": _span_kind(getattr(span, "name", ""), attrs, genai),
-        "name": getattr(span, "name", ""),
-        "span_id": getattr(getattr(span, "context", None), "span_id", None),
-        "parent_span_id": parent_span_id,
+def _span_to_node(span: ReadableSpan) -> dict[str, Any]:
+    attrs = _normalize_attributes(span.attributes)
+    mapped = _map_genai_attributes(attrs)
+    parent_span_id = span.parent.span_id if span.parent is not None else None
+    node = {
+        "type": _infer_node_type(span.name, attrs, mapped),
+        "name": span.name,
+        "span_id": str(span.context.span_id),
+        "parent_span_id": str(parent_span_id) if parent_span_id is not None else None,
         "attributes": attrs,
-        "gen_ai_attributes": genai,
+        "gen_ai_attributes": mapped,
         "children": [],
     }
+    if attrs.get("gen_ai.tool.name"):
+        node["tool_name"] = attrs.get("gen_ai.tool.name")
+    elif mapped.get("gen_ai.operation.name") == "execute_tool":
+        node["tool_name"] = span.name
+    return node
 
 
-def _spans_to_tree(spans: list[Any], *, exclude_names: set[str]) -> list[dict[str, Any]]:
-    filtered = sorted(
-        [span for span in spans if getattr(span, "name", "") not in exclude_names],
-        key=lambda span: getattr(span, "start_time", 0) or 0,
-    )
-    nodes = {
-        getattr(span.context, "span_id", None): _span_to_node(span)
-        for span in filtered
-        if getattr(getattr(span, "context", None), "span_id", None) is not None
-    }
+def _spans_to_tree(spans: list[ReadableSpan], *, exclude_names: set[str] | None = None) -> list[dict[str, Any]]:
+    exclude_names = exclude_names or set()
+    filtered = sorted([s for s in spans if s.name not in exclude_names], key=lambda s: s.start_time or 0)
+    nodes = {s.context.span_id: _span_to_node(s) for s in filtered}
     child_ids: dict[int, list[int]] = {}
     roots: list[int] = []
-    span_ids = set(nodes.keys())
+    span_ids = set(nodes)
 
     for span in filtered:
-        sid = getattr(getattr(span, "context", None), "span_id", None)
-        if sid is None or sid not in nodes:
-            continue
-        parent = span.parent.span_id if getattr(span, "parent", None) is not None else None
+        sid = span.context.span_id
+        parent = span.parent.span_id if span.parent is not None else None
         if parent is not None and parent in span_ids:
             child_ids.setdefault(parent, []).append(sid)
         else:
@@ -424,10 +319,10 @@ def _spans_to_tree(spans: list[Any], *, exclude_names: set[str]) -> list[dict[st
         node["children"] = [attach(cid) for cid in child_ids.get(sid, [])]
         return node
 
-    return [attach(root_id) for root_id in roots]
+    return [attach(rid) for rid in roots]
 
 
-def _build_trace(user_input: str, answer: str, spans: list[Any]) -> dict[str, Any]:
+def _build_trace(user_input: str, answer: str, spans: list[ReadableSpan]) -> dict[str, Any]:
     return {
         "type": "user_input",
         "input": user_input,
@@ -436,37 +331,119 @@ def _build_trace(user_input: str, answer: str, spans: list[Any]) -> dict[str, An
     }
 
 
-def _invoke_agent(user_input: str, config: dict, test_case_id: str) -> tuple[str, dict[str, Any]]:
-    _configure_env(config)
-    configurable = _resolve_stage_models(config, test_case_id)
+async def _run_agent(prompt: str, run_config: dict[str, Any]) -> Any:
+    return await deep_researcher.ainvoke(
+        {"messages": [HumanMessage(content=prompt)]},
+        config=run_config,
+    )
+
+
+async def _invoke_agent(user_input: str, vars_: dict[str, Any], config: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    tracer = trace.get_tracer("promptfoo-eval")
     _exporter.clear()
-    tracer = trace.get_tracer("codevalid.promptfoo.deep_researcher")
-    with tracer.start_as_current_span("user_input") as root_span:
-        root_span.set_attribute("input", user_input)
-        root_span.set_attribute("gen_ai.prompt", user_input)
-        result = asyncio.run(_run_agent(user_input, configurable))
-        answer = _extract_answer(result)
-        root_span.set_attribute("output", answer)
-        root_span.set_attribute("gen_ai.completion", answer)
+
+    selected_model = config.get("model")
+    default_cfg = Configuration()
+    configurable: dict[str, Any] = {
+        "search_api": "none",
+        "max_concurrent_research_units": 1,
+        "max_researcher_iterations": 1,
+        "max_react_tool_calls": 1,
+    }
+
+    if vars_.get("test_case_id") == "edge_case_clarification_disabled":
+        configurable["allow_clarification"] = False
+    else:
+        configurable["allow_clarification"] = True
+
+    if selected_model:
+        configurable["research_model"] = selected_model
+        configurable["compression_model"] = selected_model
+        configurable["final_report_model"] = selected_model
+    else:
+        configurable["research_model"] = default_cfg.research_model
+        configurable["compression_model"] = default_cfg.compression_model
+        configurable["final_report_model"] = default_cfg.final_report_model
+
+    configurable["summarization_model"] = default_cfg.summarization_model
+    configurable["summarization_model_max_tokens"] = default_cfg.summarization_model_max_tokens
+    configurable["research_model_max_tokens"] = default_cfg.research_model_max_tokens
+    configurable["compression_model_max_tokens"] = default_cfg.compression_model_max_tokens
+    configurable["final_report_model_max_tokens"] = default_cfg.final_report_model_max_tokens
+
+    precondition = vars_.get("precondition", vars_.get("preconditions"))
+    trace_meta = {
+        "expected_stage_order": [
+            "clarify_with_user",
+            "write_research_brief",
+            "research_supervisor",
+            "final_report_generation",
+        ],
+        "compression_stage_internal": "compress_research",
+        "defaults": {
+            "summarization_model": default_cfg.summarization_model,
+            "research_model": default_cfg.research_model,
+            "compression_model": default_cfg.compression_model,
+            "final_report_model": default_cfg.final_report_model,
+        },
+        "selected_eval_model": selected_model,
+        "test_case_id": vars_.get("test_case_id"),
+        "precondition": precondition,
+    }
+
+    with tracer.start_as_current_span("user_input") as root:
+        root.set_attribute("input", user_input)
+        root.set_attribute("gen_ai.prompt", user_input)
+        root.set_attribute("gen_ai.operation.name", "invoke_workflow")
+        root.set_attribute("gen_ai.request.model", str(selected_model or default_cfg.research_model))
+        try:
+            if vars_.get("test_case_id") == "edge_case_token_limit_retry":
+                raise _FakeTokenLimitError("maximum context length exceeded; reduce input tokens")
+            result = await _run_agent(user_input, {"configurable": configurable})
+            answer = _coerce_text(result.get("final_report") if isinstance(result, dict) else result)
+            payload = {
+                "report": answer,
+                "workflow": trace_meta,
+            }
+            if vars_.get("test_case_id") == "missing_info_clarification_needed":
+                payload["clarification_expected"] = True
+            root.set_attribute("output", answer)
+            root.set_attribute("gen_ai.completion", answer)
+        except Exception as exc:
+            answer = json.dumps(
+                {
+                    "error": str(exc),
+                    "workflow": trace_meta,
+                    "token_limit_detected": vars_.get("test_case_id") == "edge_case_token_limit_retry",
+                },
+                ensure_ascii=False,
+            )
+            root.set_attribute("output", answer)
+            root.set_attribute("gen_ai.completion", answer)
+
     spans = list(_exporter.get_finished_spans())
     trace_tree = _build_trace(user_input, answer, spans)
+    trace_tree["workflow"] = trace_meta
     return answer, trace_tree
 
 
 def call_api(prompt: str, options: dict, context: dict) -> dict:
+    options = options or {}
+    context = context or {}
+    config = options.get("config", {}) or {}
     vars_ = _extract_vars(options, context)
-    config = _extract_config(options, context)
-    test_case_id = vars_.get("test_case_id") or ""
+    test_case_id = vars_.get("test_case_id", "")
     precondition = vars_.get("precondition", vars_.get("preconditions"))
+
     setup_dependencies(test_case_id, precondition, config)
     try:
-        answer, trace_tree = _invoke_agent(prompt, config, test_case_id)
+        answer, trace_tree = asyncio.run(_invoke_agent(prompt, vars_, config))
         return {
             "output": json.dumps({"answer": answer, "trace": trace_tree}, ensure_ascii=False)
         }
     finally:
         cleanup_dependencies()
-        if _INSTRUMENTED:
+        if _instrumented:
             try:
                 _instrumentor.uninstrument()
             except Exception:

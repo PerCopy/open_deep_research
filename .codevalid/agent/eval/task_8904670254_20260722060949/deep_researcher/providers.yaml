@@ -1,3 +1,1 @@
-# One entry per eval model (from workspace settings at runtime)
-- file://providers/gpt-5.1.yaml
-- file://providers/claude-haiku-4-5.yaml
+# Populated at eval runtime from workspace settings
