@@ -16,166 +16,213 @@ defaultTest:
       value: "{{ rubric }}"
 
 tests:
-  - description: "Happy Path - Complete Research Workflow Execution"
+  - description: "Complete Research Workflow - End-to-End Happy Path"
     vars:
-      test_case_id: "happy_path_complete_workflow"
-      user_message: "Research the current state of electric vehicle battery recycling technology, focusing on recent innovations and environmental impact."
+      test_case_id: "happy_path_complete_research_workflow"
+      user_message: "I need a comprehensive research report on the current state of quantum computing in healthcare, focusing on drug discovery applications in the last 2 years."
       rubric: |
-        - invokes clarify_with_user to check if clarification is needed - proceeds to write_research_brief to create structured research brief - invokes supervisor_subgraph to conduct research - invokes final_report_generation to synthesize findings - returns a structured, concise research report - maintains stage ordering: clarify_with_user before write_research_brief, write_research_brief before supervisor_subgraph, supervisor_subgraph before final_report_generation
+        - executes clarification phase before research - generates a structured research brief from user request - invokes supervisor_subgraph for multi-agent research phase - calls final_report_generation after research completion - returns a final structured research report to user - maintains correct phase ordering throughout workflow
       scenario_type: "happy_path"
       expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "clarify_with_user determines no clarification needed",
-                        "research model (openai:gpt-4.1) and final_report model (openai:gpt-4.1) are available",
-                        "supervisor_subgraph executes successfully"
+                        "allow_clarification is enabled in configuration",
+                        "research_model is configured",
+                        "final_report_model is configured",
+                        "supervisor_subgraph stub exists"
                 ]
         }
     metadata:
-      test_case_id: "happy_path_complete_workflow"
+      test_case_id: "happy_path_complete_research_workflow"
 
-  - description: "Model Configuration - Summarization Stage Default Model"
+  - description: "Clarification Disabled - Skip Clarification Phase"
     vars:
-      test_case_id: "model_name_summarization_default"
-      user_message: "Find recent developments in quantum computing hardware and provide a brief report."
+      test_case_id: "clarification_disabled_skips_to_brief"
+      user_message: "Research the latest advancements in solid-state batteries for electric vehicles."
       rubric: |
-        - mention of summarization model default 'openai:gpt-4.1-mini' in workflow configuration or logs - does not alter default summarization model unless explicitly reconfigured - workflow proceeds through all four stages in correct order
-      scenario_type: "validation"
-      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
+        - skips clarify_with_user when allow_clarification is false - proceeds directly to write_research_brief - does not ask user for additional clarification - executes research and final report phases in order - respects configuration settings
+      scenario_type: "happy_path"
+      expected_tools: '["write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "default summarization model is configured as 'openai:gpt-4.1-mini'",
-                        "workflow is executed with default configuration"
+                        "allow_clarification is set to false in configuration",
+                        "research request is sufficiently clear context exists",
+                        "all other configuration is valid"
                 ]
         }
     metadata:
-      test_case_id: "model_name_summarization_default"
+      test_case_id: "clarification_disabled_skips_to_brief"
 
-  - description: "Model Configuration - Research Stage Default Model"
+  - description: "Clarification Phase - User Resolution Flow"
     vars:
-      test_case_id: "model_name_research_default"
-      user_message: "Investigate the environmental impact of microplastics in ocean ecosystems."
+      test_case_id: "clarification_needed_user_interaction"
+      user_message: "Tell me about AI."
       rubric: |
-        - mention of research model default 'openai:gpt-4.1' in configuration for write_research_brief or supervisor_subgraph - does not alter default research model unless explicitly reconfigured - research brief generated shows evidence of research model processing
-      scenario_type: "validation"
-      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
-      precondition:
-        {
-                "hints": [
-                        "default research model is configured as 'openai:gpt-4.1'",
-                        "research_model_max_tokens is appropriately set"
-                ]
-        }
-    metadata:
-      test_case_id: "model_name_research_default"
-
-  - description: "Model Configuration - Final Report Stage Default Model"
-    vars:
-      test_case_id: "model_name_final_report_default"
-      user_message: "Analyze recent breakthroughs in CRISPR gene editing technology."
-      rubric: |
-        - mention of final report model default 'openai:gpt-4.1' in final_report_generation configuration - does not alter default final report model unless explicitly reconfigured - final_report_model_max_tokens is configured appropriately
-      scenario_type: "validation"
-      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
-      precondition:
-        {
-                "hints": [
-                        "default final report model is configured as 'openai:gpt-4.1'",
-                        "final_report_model_max_tokens is set"
-                ]
-        }
-    metadata:
-      test_case_id: "model_name_final_report_default"
-
-  - description: "Missing Info - Clarification Required from User"
-    vars:
-      test_case_id: "missing_info_clarification_needed"
-      user_message: "I need research on renewable energy."
-      rubric: |
-        - invokes clarify_with_user and determines clarification is needed - returns a clarifying question to the user - does NOT proceed to write_research_brief until clarified - does NOT invoke supervisor_subgraph or final_report_generation
+        - recognizes that request is too broad or ambiguous - calls clarify_with_user to determine if clarification needed - returns END with clarifying question for user - does not proceed to write_research_brief yet - asks user for specific focus area or scope
       scenario_type: "missing_info"
       expected_tools: '["clarify_with_user"]'
       precondition:
         {
                 "hints": [
-                        "clarify_with_user is enabled (allow_clarification=True)",
-                        "research scope is ambiguous or too broad"
+                        "allow_clarification is enabled",
+                        "clarification model is configured",
+                        "user request is deliberately vague"
                 ]
         }
     metadata:
-      test_case_id: "missing_info_clarification_needed"
+      test_case_id: "clarification_needed_user_interaction"
 
-  - description: "Edge Case - Clarification Disabled, Direct to Research Brief"
+  - description: "Research Brief Generation - Structured Output"
     vars:
-      test_case_id: "edge_case_clarification_disabled"
-      user_message: "Research the latest developments in solid-state battery technology."
+      test_case_id: "research_brief_generation_from_context"
+      user_message: "Investigate the environmental impact of lithium mining in South America, focusing on water usage and community health effects from 2020-2024."
       rubric: |
-        - clarify_with_user checks configuration and finds allow_clarification=False - immediately routes to write_research_brief without asking clarifying question - proceeds through all stages in order: write_research_brief → supervisor_subgraph → final_report_generation - no clarifying question is asked to user
-      scenario_type: "edge_case"
-      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
+        - calls write_research_brief with user messages - generates structured ResearchQuestion output - extracts key research topics and sub-questions - initializes supervisor context with research brief - passes brief to supervisor_subgraph for research phase
+      scenario_type: "happy_path"
+      expected_tools: '["write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "allow_clarification is set to False in configuration",
-                        "research request is clear enough to proceed"
+                        "clarification phase is complete or skipped",
+                        "research_model supports structured output",
+                        "max_structured_output_retries is configured"
                 ]
         }
     metadata:
-      test_case_id: "edge_case_clarification_disabled"
+      test_case_id: "research_brief_generation_from_context"
 
-  - description: "Happy Path - Structured Concise Final Report Output"
+  - description: "Final Report Generation - Findings Synthesis"
     vars:
-      test_case_id: "happy_path_structured_final_report"
-      user_message: "Provide research on the adoption of artificial intelligence in healthcare diagnostics, focusing on accuracy improvements and ethical considerations."
+      test_case_id: "final_report_synthesis"
+      user_message: "Summarize the research findings on renewable energy adoption in Southeast Asia."
       rubric: |
-        - final_report_generation synthesizes all collected research notes - output is a structured research report (has clear sections or organization) - output is concise (not overly verbose, focused on key findings) - report content is derived from upstream research findings (references research brief or notes) - report incorporates date information via get_today_str
+        - calls final_report_generation after research phase completes - uses research_brief as foundation for report - synthesizes all processed findings from notes - generates a single coherent structured report - returns concise report derived from upstream research - clears notes state after successful generation
       scenario_type: "happy_path"
       expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "supervisor_subgraph has collected research notes",
-                        "state contains 'notes' and 'research_brief' fields",
-                        "final_report_model successfully generates report"
+                        "research_brief exists in state",
+                        "notes contain collected research findings",
+                        "final_report_model is configured",
+                        "supervisor_subgraph has completed its research phase"
                 ]
         }
     metadata:
-      test_case_id: "happy_path_structured_final_report"
+      test_case_id: "final_report_synthesis"
 
-  - description: "Edge Case - Token Limit Exceeded, Retry Logic"
+  - description: "Final Report - Token Limit Exceeded Recovery"
     vars:
-      test_case_id: "edge_case_token_limit_retry"
-      user_message: "Comprehensive research on the complete history of semiconductor industry from 1950 to present."
+      test_case_id: "token_limit_retry_logic"
+      user_message: "Generate a comprehensive report on global climate change impacts from 1900 to 2024 with detailed analysis."
       rubric: |
-        - final_report_generation attempts report generation - when token limit exceeded error occurs, detects it via is_token_limit_exceeded - retries report generation with reduced findings (uses get_model_token_limit to determine reduction) - eventually succeeds or gracefully fails after max_retries (3 attempts) - if successful, returns structured final report
+        - attempts final_report_generation - detects token limit exceeded errors via is_token_limit_exceeded - implements retry logic up to max_retries - adjusts findings or parameters on retry - eventually succeeds or gracefully fails - does not lose research_brief or critical findings
       scenario_type: "edge_case"
       expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "research findings are large enough to potentially exceed model token limit",
-                        "final_report_model has token limit configured"
+                        "research findings are large enough to potentially exceed token limits",
+                        "is_token_limit_exceeded function is available",
+                        "get_model_token_limit can determine model capacity",
+                        "final_report_model has known token limit"
                 ]
         }
     metadata:
-      test_case_id: "edge_case_token_limit_retry"
+      test_case_id: "token_limit_retry_logic"
 
-  - description: "Validation - Stage Order Enforcement"
+  - description: "Supervisor Subgraph Invocation - Multi-Agent Orchestration"
     vars:
-      test_case_id: "validation_stage_ordering"
-      user_message: "Research the impact of climate change on global food security."
+      test_case_id: "supervisor_phase_invocation"
+      user_message: "Research the pros and cons of nuclear energy as a transitional energy source."
       rubric: |
-        - clarify_with_user executes first (or is skipped only if disabled) - write_research_brief executes after clarify_with_user - supervisor_subgraph executes after write_research_brief - final_report_generation executes after supervisor_subgraph - no stage is skipped (except clarify_with_user when disabled) - no stages are invoked out of order
-      scenario_type: "validation"
+        - invokes supervisor_subgraph after brief generation - passes research_brief to supervisor - supervisor_subgraph is called in correct sequence position - workflow waits for supervisor completion before final report - research phase occurs between brief and final report
+      scenario_type: "happy_path"
+      expected_tools: '["write_research_brief", "supervisor_subgraph", "final_report_generation"]'
+      precondition:
+        {
+                "hints": [
+                        "write_research_brief has successfully generated research brief",
+                        "supervisor_subgraph stub exists in pipeline",
+                        "max_concurrent_research_units is configured"
+                ]
+        }
+    metadata:
+      test_case_id: "supervisor_phase_invocation"
+
+  - description: "Empty Request Handling - Validation Edge Case"
+    vars:
+      test_case_id: "empty_request_validation"
+      user_message: ""
+      rubric: |
+        - recognizes empty or missing request - does not proceed through full workflow - may ask user for clarification or valid request - does not generate research brief from empty input - maintains graceful failure mode
+      scenario_type: "edge_case"
+      precondition:
+        {
+                "hints": [
+                        "allow_clarification is enabled",
+                        "messages array contains empty or minimal content"
+                ]
+        }
+    metadata:
+      test_case_id: "empty_request_validation"
+
+  - description: "Ambiguous Scope - Mandatory Clarification"
+    vars:
+      test_case_id: "ambiguous_scope_requires_clarification"
+      user_message: "Find information about the thing."
+      rubric: |
+        - detects that research scope is unclear - calls clarify_with_user to analyze request - returns Command with END and clarifying question - does not proceed to write_research_brief - asks user to specify topic, scope, or focus area
+      scenario_type: "missing_info"
+      expected_tools: '["clarify_with_user"]'
+      precondition:
+        {
+                "hints": [
+                        "allow_clarification is enabled",
+                        "clarification model can assess need_clarification",
+                        "request is deliberately ambiguous"
+                ]
+        }
+    metadata:
+      test_case_id: "ambiguous_scope_requires_clarification"
+
+  - description: "Configuration - Model Selection per Phase"
+    vars:
+      test_case_id: "configuration_model_selection"
+      user_message: "Analyze recent developments in CRISPR gene editing for agricultural applications."
+      rubric: |
+        - uses research_model for clarification analysis - uses research_model for brief generation - uses final_report_model for final report synthesis - respects model-specific token limits - applies correct API keys for each model provider - maintains separation between research and report models
+      scenario_type: "happy_path"
       expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "clarify_with_user is enabled",
-                        "all stages are configured and functional"
+                        "research_model is configured (e.g., openai:gpt-4o)",
+                        "final_report_model is configured (e.g., anthropic:claude-3)",
+                        "API keys for both models are available",
+                        "Configuration.from_runnable_config extracts settings correctly"
                 ]
         }
     metadata:
-      test_case_id: "validation_stage_ordering"
+      test_case_id: "configuration_model_selection"
+
+  - description: "Findings Compression - Context Isolation"
+    vars:
+      test_case_id: "findings_compression_for_context"
+      user_message: "Research AI safety approaches across OpenAI, Anthropic, Google DeepMind, and academic institutions."
+      rubric: |
+        - supervisor_subgraph processes research findings - findings are returned in compressed form - compressed findings maintain source citations - token usage is managed across research sub-agents - context isolation is preserved between phases - final_report_generation receives compressed findings
+      scenario_type: "happy_path"
+      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
+      precondition:
+        {
+                "hints": [
+                        "research produces multiple findings",
+                        "compression logic exists in supervisor subgraph",
+                        "token limits are configured appropriately"
+                ]
+        }
+    metadata:
+      test_case_id: "findings_compression_for_context"
