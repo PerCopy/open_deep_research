@@ -16,213 +16,162 @@ defaultTest:
       value: "{{ rubric }}"
 
 tests:
-  - description: "Complete Research Workflow - End-to-End Happy Path"
+  - description: "Complete research workflow execution"
     vars:
-      test_case_id: "happy_path_complete_research_workflow"
-      user_message: "I need a comprehensive research report on the current state of quantum computing in healthcare, focusing on drug discovery applications in the last 2 years."
+      test_case_id: "happy_path_full_workflow"
+      user_message: "I need a comprehensive research report on the current state of quantum computing applications in drug discovery, focusing on pharmaceutical industry adoption and future prospects."
       rubric: |
-        - executes clarification phase before research - generates a structured research brief from user request - invokes supervisor_subgraph for multi-agent research phase - calls final_report_generation after research completion - returns a final structured research report to user - maintains correct phase ordering throughout workflow
+        - executes clarification phase before proceeding to research - generates or uses a research brief before calling supervisor - invokes supervisor_subgraph for multi-agent research phase - calls final_report_generation after supervisor phase completes - returns a structured, concise research report - report content reflects research findings from the workflow
       scenario_type: "happy_path"
       expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "allow_clarification is enabled in configuration",
-                        "research_model is configured",
-                        "final_report_model is configured",
-                        "supervisor_subgraph stub exists"
+                        "clarification is enabled in configuration",
+                        "search APIs are available and configured"
                 ]
         }
     metadata:
-      test_case_id: "happy_path_complete_research_workflow"
+      test_case_id: "happy_path_full_workflow"
 
-  - description: "Clarification Disabled - Skip Clarification Phase"
+  - description: "Workflow proceeds directly when clarification disabled"
     vars:
-      test_case_id: "clarification_disabled_skips_to_brief"
-      user_message: "Research the latest advancements in solid-state batteries for electric vehicles."
+      test_case_id: "happy_path_skip_clarification"
+      user_message: "Research the competitive landscape of electric vehicle battery manufacturers in 2024."
       rubric: |
-        - skips clarify_with_user when allow_clarification is false - proceeds directly to write_research_brief - does not ask user for additional clarification - executes research and final report phases in order - respects configuration settings
+        - does not invoke clarify_with_user when clarification is disabled - proceeds directly to research brief generation - invokes supervisor_subgraph for research phase - calls final_report_generation after research completes - returns a complete research report
       scenario_type: "happy_path"
       expected_tools: '["write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "allow_clarification is set to false in configuration",
-                        "research request is sufficiently clear context exists",
-                        "all other configuration is valid"
+                        "allow_clarification is set to false in configuration"
                 ]
         }
     metadata:
-      test_case_id: "clarification_disabled_skips_to_brief"
+      test_case_id: "happy_path_skip_clarification"
 
-  - description: "Clarification Phase - User Resolution Flow"
+  - description: "Clarification phase asks for more context"
     vars:
-      test_case_id: "clarification_needed_user_interaction"
-      user_message: "Tell me about AI."
+      test_case_id: "missing_info_vague_request"
+      user_message: "Research AI."
       rubric: |
-        - recognizes that request is too broad or ambiguous - calls clarify_with_user to determine if clarification needed - returns END with clarifying question for user - does not proceed to write_research_brief yet - asks user for specific focus area or scope
+        - invokes clarify_with_user function - detects need for clarification based on vague input - returns a clarifying question or asks for scope refinement - does not proceed to write_research_brief yet - asks the user for more specific research parameters
       scenario_type: "missing_info"
       expected_tools: '["clarify_with_user"]'
       precondition:
         {
                 "hints": [
                         "allow_clarification is enabled",
-                        "clarification model is configured",
-                        "user request is deliberately vague"
+                        "input is intentionally vague"
                 ]
         }
     metadata:
-      test_case_id: "clarification_needed_user_interaction"
+      test_case_id: "missing_info_vague_request"
 
-  - description: "Research Brief Generation - Structured Output"
+  - description: "Research brief generation from user input"
     vars:
-      test_case_id: "research_brief_generation_from_context"
-      user_message: "Investigate the environmental impact of lithium mining in South America, focusing on water usage and community health effects from 2020-2024."
+      test_case_id: "happy_path_specific_research_brief"
+      user_message: "I need to understand the regulatory framework for cryptocurrency exchanges in the European Union, specifically focusing on MiCA regulation compliance requirements for 2025."
       rubric: |
-        - calls write_research_brief with user messages - generates structured ResearchQuestion output - extracts key research topics and sub-questions - initializes supervisor context with research brief - passes brief to supervisor_subgraph for research phase
+        - generates a structured research brief from user input - brief includes focused research scope - brief captures specific topic requirements - proceeds to supervisor phase after brief creation - uses appropriate model configuration for brief generation
       scenario_type: "happy_path"
-      expected_tools: '["write_research_brief", "supervisor_subgraph", "final_report_generation"]'
+      expected_tools: '["clarify_with_user", "write_research_brief"]'
       precondition:
         {
                 "hints": [
-                        "clarification phase is complete or skipped",
-                        "research_model supports structured output",
-                        "max_structured_output_retries is configured"
+                        "clarification is enabled",
+                        "input is specific enough to not require additional questions"
                 ]
         }
     metadata:
-      test_case_id: "research_brief_generation_from_context"
+      test_case_id: "happy_path_specific_research_brief"
 
-  - description: "Final Report Generation - Findings Synthesis"
+  - description: "Final report synthesizes research findings"
     vars:
-      test_case_id: "final_report_synthesis"
-      user_message: "Summarize the research findings on renewable energy adoption in Southeast Asia."
+      test_case_id: "happy_path_final_report_generation"
+      user_message: "Generate the final report for my research on sustainable packaging innovations in the food industry."
       rubric: |
-        - calls final_report_generation after research phase completes - uses research_brief as foundation for report - synthesizes all processed findings from notes - generates a single coherent structured report - returns concise report derived from upstream research - clears notes state after successful generation
+        - invokes final_report_generation with research context - generates a single, coherent structured report - report is derived from research brief and collected findings - report is concise and well-organized - clears or resets notes state after report generation
+      scenario_type: "happy_path"
+      expected_tools: '["final_report_generation"]'
+      precondition:
+        {
+                "hints": [
+                        "research brief and findings exist in state",
+                        "supervisor phase has completed"
+                ]
+        }
+    metadata:
+      test_case_id: "happy_path_final_report_generation"
+
+  - description: "Final report retries on token limit errors"
+    vars:
+      test_case_id: "edge_case_token_limit_retry"
+      user_message: "Complete the research report with all detailed findings."
+      rubric: |
+        - invokes final_report_generation - detects token limit exceeded errors correctly - implements retry logic when token limit is hit - may compress findings on retry to fit token limits - eventually returns a complete report or handles gracefully
+      scenario_type: "edge_case"
+      expected_tools: '["final_report_generation"]'
+      precondition:
+        {
+                "hints": [
+                        "findings are large enough to potentially trigger token limits",
+                        "model token limits are configured"
+                ]
+        }
+    metadata:
+      test_case_id: "edge_case_token_limit_retry"
+
+  - description: "Supervisor decomposes research into sub-topics"
+    vars:
+      test_case_id: "happy_path_supervisor_decomposition"
+      user_message: "I need research on renewable energy across solar, wind, and hydroelectric power generation technologies, including efficiency comparisons."
+      rubric: |
+        - supervisor decomposes research brief into distinct sub-topics - spawns one or more research sub-agents - sub-agents operate with tool-calling loops - findings are compressed before returning to supervisor - supervisor determines sufficient coverage before final report
       scenario_type: "happy_path"
       expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "research_brief exists in state",
-                        "notes contain collected research findings",
-                        "final_report_model is configured",
-                        "supervisor_subgraph has completed its research phase"
+                        "research brief contains multiple distinct sub-topics",
+                        "allow_clarification is enabled"
                 ]
         }
     metadata:
-      test_case_id: "final_report_synthesis"
+      test_case_id: "happy_path_supervisor_decomposition"
 
-  - description: "Final Report - Token Limit Exceeded Recovery"
+  - description: "Tool selection based on input specificity"
     vars:
-      test_case_id: "token_limit_retry_logic"
-      user_message: "Generate a comprehensive report on global climate change impacts from 1900 to 2024 with detailed analysis."
+      test_case_id: "tool_selection_clarify_vs_direct"
+      user_message: "Please research the top 5 cybersecurity frameworks used in healthcare organizations for HIPAA compliance in 2024."
       rubric: |
-        - attempts final_report_generation - detects token limit exceeded errors via is_token_limit_exceeded - implements retry logic up to max_retries - adjusts findings or parameters on retry - eventually succeeds or gracefully fails - does not lose research_brief or critical findings
+        - clarify_with_user analyzes input for scope clarity - determines request is specific enough to proceed - routes to write_research_brief without asking questions - continues through supervisor and final report phases - does not unnecessarily block for clarification
+      scenario_type: "tool_selection"
+      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
+      precondition:
+        {
+                "hints": [
+                        "allow_clarification is enabled",
+                        "input contains specific parameters and scope"
+                ]
+        }
+    metadata:
+      test_case_id: "tool_selection_clarify_vs_direct"
+
+  - description: "Final report handles minimal or empty findings"
+    vars:
+      test_case_id: "edge_case_empty_findings"
+      user_message: "Research obscure topic xyz123 that has no available information."
+      rubric: |
+        - workflow completes all phases despite limited findings - final report acknowledges limited or no information available - does not crash or return error for empty findings - report is still structured and coherent - may suggest areas for further research
       scenario_type: "edge_case"
       expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
       precondition:
         {
                 "hints": [
-                        "research findings are large enough to potentially exceed token limits",
-                        "is_token_limit_exceeded function is available",
-                        "get_model_token_limit can determine model capacity",
-                        "final_report_model has known token limit"
+                        "search APIs return minimal or no results for the topic"
                 ]
         }
     metadata:
-      test_case_id: "token_limit_retry_logic"
-
-  - description: "Supervisor Subgraph Invocation - Multi-Agent Orchestration"
-    vars:
-      test_case_id: "supervisor_phase_invocation"
-      user_message: "Research the pros and cons of nuclear energy as a transitional energy source."
-      rubric: |
-        - invokes supervisor_subgraph after brief generation - passes research_brief to supervisor - supervisor_subgraph is called in correct sequence position - workflow waits for supervisor completion before final report - research phase occurs between brief and final report
-      scenario_type: "happy_path"
-      expected_tools: '["write_research_brief", "supervisor_subgraph", "final_report_generation"]'
-      precondition:
-        {
-                "hints": [
-                        "write_research_brief has successfully generated research brief",
-                        "supervisor_subgraph stub exists in pipeline",
-                        "max_concurrent_research_units is configured"
-                ]
-        }
-    metadata:
-      test_case_id: "supervisor_phase_invocation"
-
-  - description: "Empty Request Handling - Validation Edge Case"
-    vars:
-      test_case_id: "empty_request_validation"
-      user_message: ""
-      rubric: |
-        - recognizes empty or missing request - does not proceed through full workflow - may ask user for clarification or valid request - does not generate research brief from empty input - maintains graceful failure mode
-      scenario_type: "edge_case"
-      precondition:
-        {
-                "hints": [
-                        "allow_clarification is enabled",
-                        "messages array contains empty or minimal content"
-                ]
-        }
-    metadata:
-      test_case_id: "empty_request_validation"
-
-  - description: "Ambiguous Scope - Mandatory Clarification"
-    vars:
-      test_case_id: "ambiguous_scope_requires_clarification"
-      user_message: "Find information about the thing."
-      rubric: |
-        - detects that research scope is unclear - calls clarify_with_user to analyze request - returns Command with END and clarifying question - does not proceed to write_research_brief - asks user to specify topic, scope, or focus area
-      scenario_type: "missing_info"
-      expected_tools: '["clarify_with_user"]'
-      precondition:
-        {
-                "hints": [
-                        "allow_clarification is enabled",
-                        "clarification model can assess need_clarification",
-                        "request is deliberately ambiguous"
-                ]
-        }
-    metadata:
-      test_case_id: "ambiguous_scope_requires_clarification"
-
-  - description: "Configuration - Model Selection per Phase"
-    vars:
-      test_case_id: "configuration_model_selection"
-      user_message: "Analyze recent developments in CRISPR gene editing for agricultural applications."
-      rubric: |
-        - uses research_model for clarification analysis - uses research_model for brief generation - uses final_report_model for final report synthesis - respects model-specific token limits - applies correct API keys for each model provider - maintains separation between research and report models
-      scenario_type: "happy_path"
-      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
-      precondition:
-        {
-                "hints": [
-                        "research_model is configured (e.g., openai:gpt-4o)",
-                        "final_report_model is configured (e.g., anthropic:claude-3)",
-                        "API keys for both models are available",
-                        "Configuration.from_runnable_config extracts settings correctly"
-                ]
-        }
-    metadata:
-      test_case_id: "configuration_model_selection"
-
-  - description: "Findings Compression - Context Isolation"
-    vars:
-      test_case_id: "findings_compression_for_context"
-      user_message: "Research AI safety approaches across OpenAI, Anthropic, Google DeepMind, and academic institutions."
-      rubric: |
-        - supervisor_subgraph processes research findings - findings are returned in compressed form - compressed findings maintain source citations - token usage is managed across research sub-agents - context isolation is preserved between phases - final_report_generation receives compressed findings
-      scenario_type: "happy_path"
-      expected_tools: '["clarify_with_user", "write_research_brief", "supervisor_subgraph", "final_report_generation"]'
-      precondition:
-        {
-                "hints": [
-                        "research produces multiple findings",
-                        "compression logic exists in supervisor subgraph",
-                        "token limits are configured appropriately"
-                ]
-        }
-    metadata:
-      test_case_id: "findings_compression_for_context"
+      test_case_id: "edge_case_empty_findings"

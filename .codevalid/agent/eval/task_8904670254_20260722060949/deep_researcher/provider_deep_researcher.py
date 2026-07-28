@@ -4,10 +4,9 @@ import asyncio
 import json
 import os
 import sys
-from contextlib import ExitStack
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[5]
 if str(WORKSPACE_ROOT) not in sys.path:
@@ -15,9 +14,8 @@ if str(WORKSPACE_ROOT) not in sys.path:
 
 os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from opentelemetry import trace
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
@@ -29,176 +27,50 @@ except Exception:
     except Exception:
         from openinference.instrumentation.langchain import LangChainInstrumentor
 
-from open_deep_research import deep_researcher as dr
+from langchain_core.messages import AIMessage, HumanMessage
+
+from open_deep_research.deep_researcher import deep_researcher as _agent_graph
 
 _exporter = InMemorySpanExporter()
 _provider = TracerProvider()
 _provider.add_span_processor(SimpleSpanProcessor(_exporter))
-_INSTRUMENTED = False
-_INSTRUMENTOR = None
-
+trace.set_tracer_provider(_provider)
+_instrumentor = LangChainInstrumentor()
+_instrumented = False
 try:
-    trace.set_tracer_provider(_provider)
+    _instrumentor.instrument(tracer_provider=_provider)
+    _instrumented = True
 except Exception:
-    pass
+    _instrumented = False
 
-try:
-    _INSTRUMENTOR = LangChainInstrumentor()
-    _INSTRUMENTOR.instrument(tracer_provider=_provider)
-    _INSTRUMENTED = True
-except Exception:
-    _INSTRUMENTED = False
-
-_ENV_BASELINE = {k: os.environ.get(k) for k in [
-    "LITELLM_BASE_URL",
-    "LITELLM_API_KEY",
+_BASE_ENV_KEYS = [
     "OPENAI_API_BASE",
     "OPENAI_BASE_URL",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY",
+    "MODEL_NAME",
     "GET_API_KEYS_FROM_CONFIG",
-]}
+    "TAVILY_API_KEY",
+]
+_ENV_SNAPSHOT = {key: os.environ.get(key) for key in _BASE_ENV_KEYS}
+_RUNTIME_ENV_SNAPSHOT: dict[str, str | None] = {}
+_CASE_RUNTIME: dict[str, Any] = {
+    "input_state": None,
+    "configurable": {},
+    "metadata": {},
+}
+_BASE_CASE_RUNTIME = deepcopy(_CASE_RUNTIME)
 
 
-def _restore_env() -> None:
-    for key, value in _ENV_BASELINE.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-
-
-class _FakeStructuredResponse:
-    def __init__(self, **kwargs: Any) -> None:
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-
-class _FakeModelChain:
-    def __init__(self, scenario: dict[str, Any], stage: str | None = None) -> None:
-        self.scenario = scenario
-        self.stage = stage
-
-    def with_structured_output(self, schema: Any) -> "_FakeModelChain":
-        name = getattr(schema, "__name__", str(schema))
-        if name == "ClarifyWithUser":
-            return _FakeModelChain(self.scenario, stage="clarify_structured")
-        if name == "ResearchQuestion":
-            return _FakeModelChain(self.scenario, stage="brief_structured")
-        return _FakeModelChain(self.scenario, stage=self.stage)
-
-    def with_retry(self, **kwargs: Any) -> "_FakeModelChain":
-        return self
-
-    def with_config(self, config: dict[str, Any]) -> "_FakeModelChain":
-        if self.stage == "clarify_structured":
-            return _FakeModelChain(self.scenario, stage="clarify_invoke")
-        if self.stage == "brief_structured":
-            return _FakeModelChain(self.scenario, stage="brief_invoke")
-        return _FakeModelChain(self.scenario, stage="final_report_invoke")
-
-    def bind_tools(self, tools: list[Any]) -> "_FakeModelChain":
-        return _FakeModelChain(self.scenario, stage="tools_bound")
-
-    async def ainvoke(self, messages: Any) -> Any:
-        tracer = trace.get_tracer("promptfoo-eval.fake-model")
-        with tracer.start_as_current_span("llm") as span:
-            span.set_attribute("gen_ai.system", "litellm")
-            span.set_attribute("gen_ai.request.model", self.scenario.get("selected_model", ""))
-            span.set_attribute("gen_ai.operation.name", "chat")
-            span.set_attribute("input.value", _safe_json(messages))
-            span.set_attribute("llm.prompts", _safe_json(messages))
-
-            if self.stage == "clarify_invoke":
-                response = _FakeStructuredResponse(
-                    need_clarification=bool(self.scenario.get("need_clarification", False)),
-                    question=self.scenario.get("clarifying_question", "Could you clarify your research scope?"),
-                    verification=self.scenario.get("verification", "Understood. I will proceed with the research."),
-                )
-                span.set_attribute("output.value", _safe_json(response.__dict__))
-                return response
-
-            if self.stage == "brief_invoke":
-                brief = self.scenario.get("research_brief", "Structured research brief")
-                response = _FakeStructuredResponse(research_brief=brief)
-                span.set_attribute("output.value", brief)
-                return response
-
-            if self.stage == "final_report_invoke":
-                failures_before_success = int(self.scenario.get("final_report_failures_before_success", 0))
-                current_failures = int(self.scenario.get("final_report_attempts", 0))
-                if current_failures < failures_before_success:
-                    self.scenario["final_report_attempts"] = current_failures + 1
-                    error = Exception(self.scenario.get("token_limit_error_message", "context length exceeded"))
-                    error.code = "context_length_exceeded"
-                    error.type = "invalid_request_error"
-                    span.set_attribute("error", True)
-                    span.set_attribute("output.value", str(error))
-                    raise error
-                content = self.scenario.get("final_report_content", "Structured final report")
-                response = AIMessage(content=content)
-                span.set_attribute("gen_ai.completion", content)
-                span.set_attribute("output.value", content)
-                return response
-
-            response = AIMessage(content=self.scenario.get("fallback_content", "OK"))
-            span.set_attribute("output.value", response.content)
-            return response
-
-
-class _FakeSupervisorSubgraph:
-    def __init__(self, scenario: dict[str, Any]) -> None:
-        self.scenario = scenario
-
-    async def ainvoke(self, state: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
-        tracer = trace.get_tracer("promptfoo-eval.fake-supervisor")
-        with tracer.start_as_current_span("invoke_workflow") as workflow_span:
-            workflow_span.set_attribute("gen_ai.operation.name", "invoke_workflow")
-            workflow_span.set_attribute("input.value", _safe_json(state))
-
-            with tracer.start_as_current_span("decompose_research") as agent_span:
-                agent_span.set_attribute("openinference.span.kind", "agent")
-                agent_span.set_attribute("gen_ai.operation.name", "invoke_agent")
-                agent_span.set_attribute("input.value", str(state.get("research_brief", "")))
-
-                with tracer.start_as_current_span("search_tool") as tool_span:
-                    tool_span.set_attribute("gen_ai.operation.name", "execute_tool")
-                    tool_span.set_attribute("gen_ai.tool.name", "search")
-                    tool_span.set_attribute("gen_ai.tool.call.arguments", json.dumps({"query": state.get("research_brief", "")}, ensure_ascii=False))
-                    tool_span.set_attribute("gen_ai.tool.call.result", self.scenario.get("tool_result", "source-cited findings"))
-                    tool_span.set_attribute("output.value", self.scenario.get("tool_result", "source-cited findings"))
-
-                with tracer.start_as_current_span("compress_findings") as llm_span:
-                    llm_span.set_attribute("llm.system", "litellm")
-                    llm_span.set_attribute("llm.request.model", self.scenario.get("selected_model", ""))
-                    llm_span.set_attribute("llm.operation.name", "chat")
-                    llm_span.set_attribute("prompt", "Compress findings with citations")
-                    llm_span.set_attribute("completion", self.scenario.get("compressed_note", "Compressed findings with citations"))
-
-            notes = list(self.scenario.get("notes", [self.scenario.get("compressed_note", "Compressed findings with citations")]))
-            result = {
-                "notes": notes,
-                "research_brief": state.get("research_brief", self.scenario.get("research_brief", "")),
-            }
-            workflow_span.set_attribute("output.value", _safe_json(result))
-            return result
-
-
-def _safe_json(value: Any) -> str:
-    try:
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        return str(value)
-
-
-def _extract_vars(context: dict | None, options: dict | None) -> dict[str, Any]:
-    context = context or {}
+def _extract_vars(options: dict | None, context: dict | None) -> dict:
     options = options or {}
+    context = context or {}
     candidates = [
         context.get("vars"),
         options.get("vars"),
-        options.get("context", {}).get("vars") if isinstance(options.get("context"), dict) else None,
+        context.get("test", {}).get("vars") if isinstance(context.get("test"), dict) else None,
+        options.get("test", {}).get("vars") if isinstance(options.get("test"), dict) else None,
     ]
     merged: dict[str, Any] = {}
     for candidate in candidates:
@@ -207,319 +79,432 @@ def _extract_vars(context: dict | None, options: dict | None) -> dict[str, Any]:
     return merged
 
 
-def _get_test_case_id(context: dict | None, options: dict | None) -> str:
-    vars_ = _extract_vars(context, options)
+def _read_test_case_id(options: dict | None, context: dict | None) -> str:
+    vars_ = _extract_vars(options, context)
     test_case_id = vars_.get("test_case_id")
     if test_case_id is None:
         return ""
     return str(test_case_id)
 
 
-def _seed_happy_path_complete_research_workflow() -> None:
+def _read_precondition(options: dict | None, context: dict | None) -> Any:
+    vars_ = _extract_vars(options, context)
+    if "precondition" in vars_:
+        return vars_.get("precondition")
+    if "preconditions" in vars_:
+        return vars_.get("preconditions")
     return None
 
 
-def _seed_clarification_disabled_skips_to_brief() -> None:
-    return None
+def _snapshot_runtime_env() -> None:
+    global _RUNTIME_ENV_SNAPSHOT
+    _RUNTIME_ENV_SNAPSHOT = {key: os.environ.get(key) for key in _BASE_ENV_KEYS}
 
 
-def _seed_clarification_needed_user_interaction() -> None:
-    return None
+def _restore_runtime_env() -> None:
+    for key, value in _RUNTIME_ENV_SNAPSHOT.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
-def _seed_research_brief_generation_from_context() -> None:
-    return None
-
-
-def _seed_final_report_synthesis() -> None:
-    return None
-
-
-def _seed_token_limit_retry_logic() -> None:
-    return None
-
-
-def _seed_supervisor_phase_invocation() -> None:
-    return None
-
-
-def _seed_empty_request_validation() -> None:
-    return None
-
-
-def _seed_ambiguous_scope_requires_clarification() -> None:
-    return None
-
-
-def _seed_configuration_model_selection() -> None:
-    return None
-
-
-def _seed_findings_compression_for_context() -> None:
-    return None
-
-
-def setup_dependencies(test_case_id: str, precondition: Any, config: dict[str, Any]) -> None:
-    if test_case_id == "happy_path_complete_research_workflow":
-        _seed_happy_path_complete_research_workflow()
-    elif test_case_id == "clarification_disabled_skips_to_brief":
-        _seed_clarification_disabled_skips_to_brief()
-    elif test_case_id == "clarification_needed_user_interaction":
-        _seed_clarification_needed_user_interaction()
-    elif test_case_id == "research_brief_generation_from_context":
-        _seed_research_brief_generation_from_context()
-    elif test_case_id == "final_report_synthesis":
-        _seed_final_report_synthesis()
-    elif test_case_id == "token_limit_retry_logic":
-        _seed_token_limit_retry_logic()
-    elif test_case_id == "supervisor_phase_invocation":
-        _seed_supervisor_phase_invocation()
-    elif test_case_id == "empty_request_validation":
-        _seed_empty_request_validation()
-    elif test_case_id == "ambiguous_scope_requires_clarification":
-        _seed_ambiguous_scope_requires_clarification()
-    elif test_case_id == "configuration_model_selection":
-        _seed_configuration_model_selection()
-    elif test_case_id == "findings_compression_for_context":
-        _seed_findings_compression_for_context()
+def _set_env(key: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(key, None)
     else:
-        return None
+        os.environ[key] = value
+
+
+def _resolve_model(config: dict) -> str:
+    return str(config.get("model") or "")
+
+
+def _configure_model_env(config: dict) -> None:
+    base_url = os.environ["LITELLM_BASE_URL"]
+    api_key = os.environ["LITELLM_API_KEY"]
+    _set_env("OPENAI_API_BASE", base_url)
+    _set_env("OPENAI_BASE_URL", base_url)
+    _set_env("OPENAI_API_KEY", api_key)
+    _set_env("ANTHROPIC_API_KEY", api_key)
+    _set_env("GOOGLE_API_KEY", api_key)
+    _set_env("GET_API_KEYS_FROM_CONFIG", "false")
+    model_name = _resolve_model(config)
+    if model_name:
+        _set_env("MODEL_NAME", model_name)
+
+
+def _base_configurable(config: dict) -> dict:
+    model_name = _resolve_model(config)
+    configurable = {
+        "research_model": model_name,
+        "final_report_model": model_name,
+        "compression_model": model_name,
+        "summarization_model": model_name,
+        "research_model_max_tokens": 800,
+        "final_report_model_max_tokens": 1200,
+        "compression_model_max_tokens": 800,
+        "summarization_model_max_tokens": 600,
+        "max_structured_output_retries": 1,
+        "max_researcher_iterations": 2,
+        "max_concurrent_research_units": 2,
+        "max_react_tool_calls": 2,
+        "max_content_length": 4000,
+        "search_api": "none",
+        "allow_clarification": True,
+    }
+    return configurable
+
+
+def _seed_happy_path_full_workflow() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [
+            HumanMessage(
+                content=(
+                    "I need a comprehensive research report on the current state of quantum "
+                    "computing applications in drug discovery, focusing on pharmaceutical "
+                    "industry adoption and future prospects."
+                )
+            )
+        ]
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": True,
+        "search_api": "none",
+    }
+
+
+def _seed_happy_path_skip_clarification() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [
+            HumanMessage(
+                content="Research the competitive landscape of electric vehicle battery manufacturers in 2024."
+            )
+        ]
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": False,
+        "search_api": "none",
+    }
+
+
+def _seed_missing_info_vague_request() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [HumanMessage(content="Research AI.")]
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": True,
+        "search_api": "none",
+    }
+
+
+def _seed_happy_path_specific_research_brief() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [
+            HumanMessage(
+                content=(
+                    "I need to understand the regulatory framework for cryptocurrency "
+                    "exchanges in the European Union, specifically focusing on MiCA "
+                    "regulation compliance requirements for 2025."
+                )
+            )
+        ]
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": True,
+        "search_api": "none",
+    }
+
+
+def _seed_happy_path_final_report_generation() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [
+            HumanMessage(content="Generate the final report for my research on sustainable packaging innovations in the food industry.")
+        ],
+        "research_brief": (
+            "Research sustainable packaging innovations in the food industry, emphasizing "
+            "material advances, commercial adoption, and operational trade-offs."
+        ),
+        "notes": [
+            "Biodegradable films and fiber-based packaging are increasingly adopted for food products.",
+            "Barrier performance, shelf life, and recycling infrastructure remain central constraints.",
+            "Brands are balancing regulatory pressure, consumer demand, and cost-to-scale considerations.",
+        ],
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": False,
+        "search_api": "none",
+    }
+
+
+def _seed_edge_case_token_limit_retry() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [HumanMessage(content="Complete the research report with all detailed findings.")],
+        "research_brief": "Produce a comprehensive final report from the accumulated findings.",
+        "notes": ["Detailed finding segment {} {}".format(i, "x" * 400) for i in range(1, 60)],
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": False,
+        "search_api": "none",
+    }
+
+
+def _seed_happy_path_supervisor_decomposition() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [
+            HumanMessage(
+                content=(
+                    "I need research on renewable energy across solar, wind, and hydroelectric "
+                    "power generation technologies, including efficiency comparisons."
+                )
+            )
+        ]
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": True,
+        "search_api": "none",
+        "max_concurrent_research_units": 3,
+    }
+
+
+def _seed_tool_selection_clarify_vs_direct() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [
+            HumanMessage(
+                content=(
+                    "Please research the top 5 cybersecurity frameworks used in healthcare "
+                    "organizations for HIPAA compliance in 2024."
+                )
+            )
+        ]
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": True,
+        "search_api": "none",
+    }
+
+
+def _seed_edge_case_empty_findings() -> None:
+    _CASE_RUNTIME["input_state"] = {
+        "messages": [HumanMessage(content="Research obscure topic xyz123 that has no available information.")],
+        "research_brief": "Investigate topic xyz123 and report any reliable information or acknowledge lack of evidence.",
+        "notes": [],
+    }
+    _CASE_RUNTIME["configurable"] = {
+        **_base_configurable({"model": os.environ.get("MODEL_NAME", "")}),
+        "allow_clarification": True,
+        "search_api": "none",
+    }
+
+
+def setup_dependencies(test_case_id: str, precondition: Any, config: dict) -> None:
+    del precondition
+    _snapshot_runtime_env()
+    _CASE_RUNTIME.clear()
+    _CASE_RUNTIME.update(deepcopy(_BASE_CASE_RUNTIME))
+    _configure_model_env(config)
+
+    dispatch = {
+        "happy_path_full_workflow": _seed_happy_path_full_workflow,
+        "happy_path_skip_clarification": _seed_happy_path_skip_clarification,
+        "missing_info_vague_request": _seed_missing_info_vague_request,
+        "happy_path_specific_research_brief": _seed_happy_path_specific_research_brief,
+        "happy_path_final_report_generation": _seed_happy_path_final_report_generation,
+        "edge_case_token_limit_retry": _seed_edge_case_token_limit_retry,
+        "happy_path_supervisor_decomposition": _seed_happy_path_supervisor_decomposition,
+        "tool_selection_clarify_vs_direct": _seed_tool_selection_clarify_vs_direct,
+        "edge_case_empty_findings": _seed_edge_case_empty_findings,
+    }
+    seed_fn = dispatch.get(test_case_id)
+    if seed_fn is not None:
+        seed_fn()
+    else:
+        _CASE_RUNTIME["input_state"] = {
+            "messages": [HumanMessage(content="")]
+        }
+        _CASE_RUNTIME["configurable"] = _base_configurable(config)
+
+    model_name = _resolve_model(config)
+    if model_name:
+        _CASE_RUNTIME["configurable"]["research_model"] = model_name
+        _CASE_RUNTIME["configurable"]["final_report_model"] = model_name
+        _CASE_RUNTIME["configurable"]["compression_model"] = model_name
+        _CASE_RUNTIME["configurable"]["summarization_model"] = model_name
 
 
 def cleanup_dependencies() -> None:
-    _restore_env()
-    if _INSTRUMENTED and _INSTRUMENTOR is not None:
-        try:
-            _INSTRUMENTOR.uninstrument()
-        except Exception:
-            pass
-        try:
-            _INSTRUMENTOR.instrument(tracer_provider=_provider)
-        except Exception:
-            pass
+    _CASE_RUNTIME.clear()
+    _CASE_RUNTIME.update(deepcopy(_BASE_CASE_RUNTIME))
+    _restore_runtime_env()
+    try:
+        if _instrumented:
+            _instrumentor.uninstrument()
+            _instrumentor.instrument(tracer_provider=_provider)
+    except Exception:
+        pass
 
 
-def _build_scenario(test_case_id: str, prompt: str, config: dict[str, Any], vars_: dict[str, Any]) -> dict[str, Any]:
-    selected_model = str(config.get("model") or "")
-    scenario: dict[str, Any] = {
-        "selected_model": selected_model,
-        "research_brief": f"Research brief: {prompt}" if prompt else "Research brief: Please provide a valid research request.",
-        "verification": "I have enough context to proceed with the research.",
-        "clarifying_question": "Could you clarify the topic, scope, timeframe, and desired output for this research request?",
-        "need_clarification": False,
-        "notes": ["Compressed findings with citations from supervised research."],
-        "compressed_note": "Compressed findings with citations from supervised research.",
-        "tool_result": "Retrieved source-cited evidence from search results.",
-        "final_report_content": "# Research Report\n\n## Executive Summary\nConcise synthesis derived from the research brief and compressed findings.\n\n## Key Findings\n- Source-cited supervised research findings were incorporated.\n- Findings were compressed before final synthesis.\n\n## Conclusion\nThe workflow completed in order and produced a final structured report.",
-        "final_report_failures_before_success": 0,
-        "final_report_attempts": 0,
-        "token_limit_error_message": "maximum context length exceeded",
-    }
-
-    if test_case_id == "clarification_disabled_skips_to_brief":
-        scenario["need_clarification"] = False
-    elif test_case_id == "clarification_needed_user_interaction":
-        scenario["need_clarification"] = True
-        scenario["clarifying_question"] = "Your request is broad. What aspect of AI, timeframe, and use case should I focus on?"
-    elif test_case_id == "research_brief_generation_from_context":
-        scenario["research_brief"] = "Investigate the environmental impact of lithium mining in South America, focusing on water usage and community health effects from 2020-2024."
-    elif test_case_id == "final_report_synthesis":
-        scenario["notes"] = [
-            "Renewable adoption has accelerated across Southeast Asia with uneven policy support.",
-            "Grid modernization and financing remain key bottlenecks.",
-        ]
-        scenario["compressed_note"] = "Regional renewable adoption increased, but grid and financing constraints remain; evidence retained with citations."
-    elif test_case_id == "token_limit_retry_logic":
-        scenario["final_report_failures_before_success"] = 1
-        scenario["notes"] = ["X" * 8000, "Y" * 8000]
-        scenario["final_report_content"] = "# Research Report\n\nRecovered after token-limit retry and produced a concise final report."
-    elif test_case_id == "supervisor_phase_invocation":
-        scenario["compressed_note"] = "Supervisor decomposed the brief and returned synthesized findings."
-    elif test_case_id == "empty_request_validation":
-        scenario["need_clarification"] = True
-        scenario["clarifying_question"] = "Please provide a non-empty research topic, scope, or question to investigate."
-    elif test_case_id == "ambiguous_scope_requires_clarification":
-        scenario["need_clarification"] = True
-        scenario["clarifying_question"] = "Please specify what 'the thing' refers to, along with the scope and focus of the research."
-    elif test_case_id == "configuration_model_selection":
-        scenario["final_report_content"] = f"# Research Report\n\nGenerated using eval-selected model routing with final model {selected_model or 'unspecified'}."
-    elif test_case_id == "findings_compression_for_context":
-        scenario["compressed_note"] = "Compressed, source-cited findings across OpenAI, Anthropic, Google DeepMind, and academia."
-        scenario["notes"] = [scenario["compressed_note"]]
-
-    return scenario
+def _normalize_attributes(attrs: Any) -> dict[str, Any]:
+    if not attrs:
+        return {}
+    try:
+        return {str(k): _jsonable(v) for k, v in dict(attrs).items()}
+    except Exception:
+        return {}
 
 
-def _prepare_env(config: dict[str, Any]) -> None:
-    base_url = os.environ["LITELLM_BASE_URL"]
-    api_key = os.environ["LITELLM_API_KEY"]
-    os.environ["OPENAI_API_BASE"] = base_url
-    os.environ["OPENAI_BASE_URL"] = base_url
-    os.environ["OPENAI_API_KEY"] = api_key
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    os.environ["GOOGLE_API_KEY"] = api_key
-    os.environ["GET_API_KEYS_FROM_CONFIG"] = "false"
+def _jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    content = getattr(value, "content", None)
+    if content is not None:
+        return _jsonable(content)
+    return str(value)
 
 
-def _configurable_for_test(test_case_id: str, selected_model: str) -> dict[str, Any]:
-    allow_clarification = test_case_id not in {
-        "clarification_disabled_skips_to_brief",
-    }
-    return {
-        "allow_clarification": allow_clarification,
-        "research_model": selected_model,
-        "research_model_max_tokens": 1024,
-        "final_report_model": selected_model,
-        "final_report_model_max_tokens": 1024,
-        "compression_model": selected_model,
-        "compression_model_max_tokens": 1024,
-        "max_structured_output_retries": 2,
-        "max_concurrent_research_units": 2,
-        "max_researcher_iterations": 2,
-        "max_react_tool_calls": 2,
-        "mcp_prompt": "",
-    }
+def _pick_first(attrs: dict[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        if key in attrs and attrs[key] not in (None, "", [], {}):
+            return attrs[key]
+    return None
 
 
-async def _invoke_agent(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    vars_ = _extract_vars(context, options)
-    test_case_id = _get_test_case_id(context, options)
-    config = dict((options or {}).get("config", {}) or {})
-    selected_model = str(config.get("model") or "")
-    scenario = _build_scenario(test_case_id, prompt, config, vars_)
-
-    state = {
-        "messages": [HumanMessage(content=prompt)],
-    }
-    if test_case_id == "final_report_synthesis":
-        state["notes"] = list(scenario.get("notes", []))
-        state["research_brief"] = scenario.get("research_brief", "")
-
-    runnable_config = {
-        "configurable": _configurable_for_test(test_case_id, selected_model),
-    }
-
-    _exporter.clear()
-    tracer = trace.get_tracer("promptfoo-eval")
-
-    with ExitStack() as stack:
-        stack.enter_context(patch.object(dr, "configurable_model", _FakeModelChain(scenario)))
-        stack.enter_context(patch.object(dr, "supervisor_subgraph", _FakeSupervisorSubgraph(scenario)))
-        stack.enter_context(patch.object(dr, "get_api_key_for_model", lambda model_name, cfg: os.environ["LITELLM_API_KEY"]))
-
-        with tracer.start_as_current_span("user_input") as root:
-            root.set_attribute("input", prompt)
-            root.set_attribute("gen_ai.prompt", prompt)
-            root.set_attribute("gen_ai.request.model", selected_model)
-            root.set_attribute("gen_ai.system", "litellm")
-            root.set_attribute("gen_ai.operation.name", "invoke_workflow")
-            result = await dr.deep_researcher.ainvoke(state, config=runnable_config)
-            answer = _coerce_answer(result)
-            root.set_attribute("output", answer)
-            root.set_attribute("gen_ai.completion", answer)
-
-    spans = list(_exporter.get_finished_spans())
-    trace_tree = _build_trace(prompt, answer, spans)
-    return answer, trace_tree
-
-
-def _coerce_answer(result: Any) -> str:
-    if result is None:
-        return ""
-    if isinstance(result, str):
-        return result
-    if hasattr(result, "content"):
-        content = getattr(result, "content", "")
-        return _coerce_answer(content)
-    if isinstance(result, dict):
-        for key in ("final_report", "output", "answer", "content"):
-            if key in result and result[key] is not None:
-                return _coerce_answer(result[key])
-        messages = result.get("messages")
-        if isinstance(messages, list) and messages:
-            return _coerce_answer(messages[-1])
-    if isinstance(result, list) and result:
-        return _coerce_answer(result[-1])
-    return str(result)
-
-
-def _map_genai_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
+def _map_genai_attributes(attrs: dict[str, Any]) -> dict[str, Any]:
     mapped: dict[str, Any] = {}
     alias_map = {
-        "gen_ai.system": ["gen_ai.system", "llm.system"],
-        "gen_ai.request.model": ["gen_ai.request.model", "llm.request.model", "llm.model_name", "model", "openinference.llm.model_name"],
-        "gen_ai.response.model": ["gen_ai.response.model", "llm.response.model", "response.model"],
-        "gen_ai.operation.name": ["gen_ai.operation.name", "llm.operation.name", "openinference.span.kind"],
-        "gen_ai.prompt": ["gen_ai.prompt", "input.value", "llm.prompts", "prompt"],
-        "gen_ai.completion": ["gen_ai.completion", "output.value", "response", "completion"],
-        "gen_ai.usage.input_tokens": ["gen_ai.usage.input_tokens", "llm.token_count.prompt", "input_tokens", "prompt_tokens"],
-        "gen_ai.usage.output_tokens": ["gen_ai.usage.output_tokens", "llm.token_count.completion", "output_tokens", "completion_tokens"],
+        "gen_ai.system": [
+            "gen_ai.system",
+            "llm.system",
+            "ai.system",
+        ],
+        "gen_ai.request.model": [
+            "gen_ai.request.model",
+            "llm.request.model",
+            "llm.model_name",
+            "model",
+            "openinference.llm.model_name",
+        ],
+        "gen_ai.response.model": [
+            "gen_ai.response.model",
+            "llm.response.model",
+            "response.model",
+        ],
+        "gen_ai.operation.name": [
+            "gen_ai.operation.name",
+            "llm.operation.name",
+            "openinference.span.kind",
+        ],
+        "gen_ai.prompt": [
+            "gen_ai.prompt",
+            "input.value",
+            "llm.prompts",
+            "prompt",
+            "gen_ai.input.messages",
+            "input",
+        ],
+        "gen_ai.completion": [
+            "gen_ai.completion",
+            "output.value",
+            "response",
+            "completion",
+            "gen_ai.output.messages",
+            "output",
+        ],
+        "gen_ai.usage.input_tokens": [
+            "gen_ai.usage.input_tokens",
+            "llm.token_count.prompt",
+            "input_tokens",
+            "prompt_tokens",
+            "usage.prompt_tokens",
+        ],
+        "gen_ai.usage.output_tokens": [
+            "gen_ai.usage.output_tokens",
+            "llm.token_count.completion",
+            "output_tokens",
+            "completion_tokens",
+            "usage.completion_tokens",
+        ],
     }
-    for target, keys in alias_map.items():
-        for key in keys:
-            if key in attributes and attributes[key] not in (None, "", []):
-                mapped[target] = attributes[key]
-                break
+    for target_key, aliases in alias_map.items():
+        value = _pick_first(attrs, aliases)
+        if value is not None:
+            mapped[target_key] = value
     return mapped
 
 
-def _span_type(span: ReadableSpan, mapped: dict[str, Any]) -> str:
-    op = str(mapped.get("gen_ai.operation.name", "")).lower()
-    if op == "execute_tool" or "tool" in span.name.lower():
+def _guess_node_type(span_name: str, attrs: dict[str, Any], gen_ai: dict[str, Any]) -> str:
+    operation = str(gen_ai.get("gen_ai.operation.name", "")).lower()
+    if operation == "execute_tool":
         return "tool"
-    if op in {"chat", "llm"} or span.name.lower() == "llm":
+    if operation in {"chat", "completion", "generate"}:
         return "llm"
-    if op in {"invoke_agent", "invoke_workflow"}:
+    tool_name = _pick_first(attrs, ["gen_ai.tool.name", "tool.name", "name"])
+    if tool_name and span_name != "user_input":
+        return "tool"
+    if "agent" in span_name.lower() or "graph" in span_name.lower() or "workflow" in span_name.lower() or "langgraph" in span_name.lower():
         return "agent"
-    return "agent"
+    if any(k.startswith("gen_ai") or k.startswith("llm") for k in attrs):
+        return "llm"
+    return "span"
 
 
-def _span_to_node(span: ReadableSpan) -> dict[str, Any]:
-    attrs = dict(span.attributes or {})
-    mapped = _map_genai_attributes(attrs)
-    parent_span_id = span.parent.span_id if span.parent is not None else None
+def _span_to_node(span: Any) -> dict[str, Any]:
+    attrs = _normalize_attributes(getattr(span, "attributes", {}))
+    gen_ai = _map_genai_attributes(attrs)
+    parent_span_id = None
+    if getattr(span, "parent", None) is not None:
+        parent_span_id = format(span.parent.span_id, "x")
     node = {
-        "type": _span_type(span, mapped),
-        "name": span.name,
-        "span_id": str(span.context.span_id),
-        "parent_span_id": str(parent_span_id) if parent_span_id is not None else None,
-        "attributes": {str(k): v for k, v in attrs.items()},
-        "gen_ai_attributes": mapped,
+        "type": _guess_node_type(getattr(span, "name", ""), attrs, gen_ai),
+        "name": getattr(span, "name", ""),
+        "span_id": format(span.context.span_id, "x"),
+        "parent_span_id": parent_span_id,
+        "attributes": attrs,
+        "gen_ai_attributes": gen_ai,
         "children": [],
     }
-    if node["type"] == "tool":
-        node["input"] = mapped.get("gen_ai.prompt") or attrs.get("gen_ai.tool.call.arguments") or attrs.get("input.value")
-        node["output"] = mapped.get("gen_ai.completion") or attrs.get("gen_ai.tool.call.result") or attrs.get("output.value")
-    elif node["type"] == "llm":
-        node["input"] = mapped.get("gen_ai.prompt")
-        node["output"] = mapped.get("gen_ai.completion")
     return node
 
 
-def _spans_to_tree(spans: list[ReadableSpan], *, exclude_names: set[str]) -> list[dict[str, Any]]:
-    filtered = sorted([s for s in spans if s.name not in exclude_names], key=lambda s: s.start_time or 0)
-    nodes = {s.context.span_id: _span_to_node(s) for s in filtered}
+def _spans_to_tree(spans: list[Any], *, exclude_names: set[str]) -> list[dict[str, Any]]:
+    filtered = sorted(
+        [span for span in spans if getattr(span, "name", "") not in exclude_names],
+        key=lambda span: getattr(span, "start_time", 0) or 0,
+    )
+    nodes = {span.context.span_id: _span_to_node(span) for span in filtered}
     child_ids: dict[int, list[int]] = {}
     roots: list[int] = []
     span_ids = set(nodes)
 
     for span in filtered:
         sid = span.context.span_id
-        parent = span.parent.span_id if span.parent is not None else None
-        if parent is not None and parent in span_ids:
-            child_ids.setdefault(parent, []).append(sid)
+        parent_sid = span.parent.span_id if getattr(span, "parent", None) is not None else None
+        if parent_sid is not None and parent_sid in span_ids:
+            child_ids.setdefault(parent_sid, []).append(sid)
         else:
             roots.append(sid)
 
-    def attach(span_id: int) -> dict[str, Any]:
-        node = nodes[span_id]
-        node["children"] = [attach(child_id) for child_id in child_ids.get(span_id, [])]
+    def attach(sid: int) -> dict[str, Any]:
+        node = nodes[sid]
+        node["children"] = [attach(child_sid) for child_sid in child_ids.get(sid, [])]
         return node
 
-    return [attach(root_id) for root_id in roots]
+    return [attach(root_sid) for root_sid in roots]
 
 
-def _build_trace(user_input: str, answer: str, spans: list[ReadableSpan]) -> dict[str, Any]:
+def _build_trace(user_input: str, answer: str, spans: list[Any]) -> dict[str, Any]:
     return {
         "type": "user_input",
         "input": user_input,
@@ -528,18 +513,75 @@ def _build_trace(user_input: str, answer: str, spans: list[ReadableSpan]) -> dic
     }
 
 
+def _coerce_answer(result: Any) -> str:
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for key in ("final_report", "output", "answer", "content"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if hasattr(value, "content"):
+                return _coerce_answer(value)
+        messages = result.get("messages")
+        if isinstance(messages, list) and messages:
+            return _coerce_answer(messages[-1])
+        return json.dumps(_jsonable(result), ensure_ascii=False)
+    content = getattr(result, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        try:
+            return "\n".join(str(_jsonable(item)) for item in content if item is not None)
+        except Exception:
+            pass
+    messages = getattr(result, "messages", None)
+    if messages:
+        return _coerce_answer(messages[-1])
+    return str(result)
+
+
+async def _ainvoke_agent(user_input: str, config: dict) -> tuple[str, dict[str, Any]]:
+    configurable = deepcopy(_CASE_RUNTIME.get("configurable") or _base_configurable(config))
+    metadata = deepcopy(_CASE_RUNTIME.get("metadata") or {})
+    state = deepcopy(_CASE_RUNTIME.get("input_state") or {"messages": [HumanMessage(content=user_input)]})
+    if not state.get("messages"):
+        state["messages"] = [HumanMessage(content=user_input)]
+
+    tracer = trace.get_tracer("promptfoo-eval")
+    _exporter.clear()
+    with tracer.start_as_current_span("user_input") as root:
+        root.set_attribute("input", user_input)
+        result = await _agent_graph.ainvoke(
+            state,
+            config={
+                "configurable": configurable,
+                "metadata": metadata,
+            },
+        )
+        answer = _coerce_answer(result)
+        root.set_attribute("output", answer)
+    spans = list(_exporter.get_finished_spans())
+    trace_tree = _build_trace(user_input, answer, spans)
+    return answer, trace_tree
+
+
+def _invoke_agent(user_input: str, config: dict) -> tuple[str, dict[str, Any]]:
+    return asyncio.run(_ainvoke_agent(user_input, config))
+
+
 def call_api(prompt: str, options: dict, context: dict) -> dict:
     options = options or {}
     context = context or {}
-    vars_ = _extract_vars(context, options)
-    test_case_id = _get_test_case_id(context, options)
-    precondition = vars_.get("precondition", vars_.get("preconditions"))
-    config = dict(options.get("config", {}) or {})
+    config = options.get("config", {}) or {}
+    test_case_id = _read_test_case_id(options, context)
+    precondition = _read_precondition(options, context)
 
     setup_dependencies(test_case_id, precondition, config)
     try:
-        _prepare_env(config)
-        answer, trace_tree = asyncio.run(_invoke_agent(prompt, options, context))
+        answer, trace_tree = _invoke_agent(prompt, config)
         return {
             "output": json.dumps({"answer": answer, "trace": trace_tree}, ensure_ascii=False)
         }
